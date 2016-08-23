@@ -151,6 +151,12 @@ namespace System.Composition.UnitTests
 {
     public class MyTestClass
     {
+        [TestInitialize]
+        public void Setup()
+        {
+            Console.WriteLine();
+        }
+
         [TestMethod]
         public void MyTestMethod()
         {
@@ -167,6 +173,11 @@ namespace System.Composition.UnitTests
 {
     public class MyTestClass
     {
+        public MyTestClass()
+        {
+            Console.WriteLine();
+        }
+
         [Fact]
         public void MyTestMethod()
         {

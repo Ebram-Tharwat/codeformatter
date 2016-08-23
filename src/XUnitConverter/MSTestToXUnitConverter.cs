@@ -90,6 +90,7 @@ namespace XUnitConverter
             TransformationTracker transformationTracker = new TransformationTracker();
             RemoveTestClassAttributes(root, semanticModel, transformationTracker);
             RemoveContractsRequiredAttributes(root, semanticModel, transformationTracker);
+            ChangeTestInitializeToCtor(root, semanticModel, transformationTracker);
             ChangeTestMethodAttributesToFact(root, semanticModel, transformationTracker);
             ChangeAssertCalls(root, semanticModel, transformationTracker);
             root = transformationTracker.TransformRoot(root);
@@ -129,6 +130,41 @@ namespace XUnitConverter
             RemoveTestAttributes(root, semanticModel, transformationTracker, "TestClassAttribute");
         }
 
+        private void ChangeTestInitializeToCtor(CompilationUnitSyntax root, SemanticModel semanticModel, TransformationTracker transformationTracker)
+        {
+            List<MethodDeclarationSyntax> nodesToReplace = new List<MethodDeclarationSyntax>();
+
+            foreach (var attributeSyntax in root.DescendantNodes().OfType<AttributeSyntax>())
+            {
+                var typeInfo = semanticModel.GetTypeInfo(attributeSyntax);
+                if (typeInfo.Type != null)
+                {
+                    string attributeTypeDocID = typeInfo.Type.GetDocumentationCommentId();
+                    if (IsTestNamespaceType(attributeTypeDocID, "TestInitializeAttribute"))
+                    {
+                        nodesToReplace.Add((MethodDeclarationSyntax)attributeSyntax.Parent.Parent);
+                    }
+                }
+            }
+
+            transformationTracker.AddTransformation(nodesToReplace, (transformationRoot, rewrittenNodes, originalNodeMap) =>
+            {
+                return transformationRoot.ReplaceNodes(rewrittenNodes, (originalNode, rewrittenNode) =>
+                {
+                    var testInitializeMethodNode = ((MethodDeclarationSyntax)originalNode);
+                    var classIdentifier = originalNode.Ancestors().OfType<ClassDeclarationSyntax>().Single().Identifier;
+
+                    return SyntaxFactory
+                        .ConstructorDeclaration(classIdentifier)
+                        .WithModifiers(testInitializeMethodNode.Modifiers)
+                        .NormalizeWhitespace()
+                        .WithBody(testInitializeMethodNode.Body)
+                        .WithLeadingTrivia(testInitializeMethodNode.GetLeadingTrivia())
+                        .WithTrailingTrivia(testInitializeMethodNode.GetTrailingTrivia());
+                });
+            });
+        }
+
         private void RemoveTestAttributes(CompilationUnitSyntax root, SemanticModel semanticModel, TransformationTracker transformationTracker, string attributeName)
         {
             List<AttributeSyntax> nodesToRemove = new List<AttributeSyntax>();
@@ -164,7 +200,7 @@ namespace XUnitConverter
                     }
                     else
                     {
-                        transformationRoot = transformationRoot.RemoveNode(attributeListSyntax, SyntaxRemoveOptions.KeepLeadingTrivia);
+                        transformationRoot = transformationRoot.RemoveNode(attributeListSyntax, SyntaxRemoveOptions.KeepNoTrivia);
                     }
                 }
                 return transformationRoot;
@@ -317,6 +353,8 @@ namespace XUnitConverter
                 var filePath = Path.Combine(
                     Path.GetDirectoryName(Uri.UnescapeDataString(new UriBuilder(typeof(MSTestToXUnitConverter).Assembly.CodeBase).Path)),
                     "MSTestNamespaces.txt");
+
+                filePath = @"C:\Users\Thijs Brobbel\src\projects\codeformatter\src\XUnitConverter\MSTestNamespaces.txt";
 
                 if (!File.Exists(filePath))
                 {
