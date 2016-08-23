@@ -91,6 +91,7 @@ namespace XUnitConverter
             RemoveTestClassAttributes(root, semanticModel, transformationTracker);
             RemoveContractsRequiredAttributes(root, semanticModel, transformationTracker);
             ChangeTestInitializeToCtor(root, semanticModel, transformationTracker);
+            ChangeTestCleanupToIDisposable(root, semanticModel, transformationTracker);
             ChangeTestMethodAttributesToFact(root, semanticModel, transformationTracker);
             ChangeAssertCalls(root, semanticModel, transformationTracker);
             root = transformationTracker.TransformRoot(root);
@@ -152,7 +153,8 @@ namespace XUnitConverter
                 return transformationRoot.ReplaceNodes(rewrittenNodes, (originalNode, rewrittenNode) =>
                 {
                     var testInitializeMethodNode = ((MethodDeclarationSyntax)originalNode);
-                    var classIdentifier = originalNode.Ancestors().OfType<ClassDeclarationSyntax>().Single().Identifier;
+                    var classDeclaration = (ClassDeclarationSyntax)originalNode.Parent;
+                    var classIdentifier = classDeclaration.Identifier;
 
                     return SyntaxFactory
                         .ConstructorDeclaration(classIdentifier)
@@ -161,6 +163,54 @@ namespace XUnitConverter
                         .WithBody(testInitializeMethodNode.Body)
                         .WithLeadingTrivia(testInitializeMethodNode.GetLeadingTrivia())
                         .WithTrailingTrivia(testInitializeMethodNode.GetTrailingTrivia());
+                });
+            });
+        }
+
+        private void ChangeTestCleanupToIDisposable(CompilationUnitSyntax root, SemanticModel semanticModel, TransformationTracker transformationTracker)
+        {
+            List<MethodDeclarationSyntax> methodNodesToReplace = new List<MethodDeclarationSyntax>();
+            List<ClassDeclarationSyntax> classNodesToAmend = new List<ClassDeclarationSyntax>();
+
+            foreach (var attributeSyntax in root.DescendantNodes().OfType<AttributeSyntax>())
+            {
+                var typeInfo = semanticModel.GetTypeInfo(attributeSyntax);
+                if (typeInfo.Type != null)
+                {
+                    string attributeTypeDocID = typeInfo.Type.GetDocumentationCommentId();
+                    if (IsTestNamespaceType(attributeTypeDocID, "TestCleanupAttribute"))
+                    {
+                        var methodNode = (MethodDeclarationSyntax)attributeSyntax.Parent.Parent;
+                        var classNode = (ClassDeclarationSyntax)methodNode.Parent;
+                        methodNodesToReplace.Add(methodNode);
+                        classNodesToAmend.Add(classNode);
+                    }
+                }
+            }
+
+            transformationTracker.AddTransformation(methodNodesToReplace, (transformationRoot, rewrittenNodes, originalNodeMap) =>
+            {
+                return transformationRoot.ReplaceNodes(rewrittenNodes, (originalNode, rewrittenNode) =>
+                {
+                    var testCleanupMethodNode = ((MethodDeclarationSyntax)originalNode);
+
+                    return testCleanupMethodNode
+                        .WithIdentifier(SyntaxFactory.Identifier("Dispose"))
+                        .WithAttributeLists(default(SyntaxList<AttributeListSyntax>));
+                });
+            });
+
+            transformationTracker.AddTransformation(classNodesToAmend, (transformationRoot, rewrittenNodes, originalNodeMap) =>
+            {
+                return transformationRoot.ReplaceNodes(rewrittenNodes, (originalNode, rewrittenNode) =>
+                {
+                    var classNode = ((ClassDeclarationSyntax)originalNode);
+
+                    var iDisposableBaseList = SyntaxFactory.BaseList(
+                        SyntaxFactory.SingletonSeparatedList<BaseTypeSyntax>(
+                            SyntaxFactory.SimpleBaseType(
+                                SyntaxFactory.IdentifierName("System.IDisposable"))));
+                    return classNode.WithBaseList(iDisposableBaseList);
                 });
             });
         }
